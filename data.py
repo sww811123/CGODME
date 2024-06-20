@@ -8,7 +8,7 @@ class data_generation:
     def __init__(self, config_setting):
 
         self.config_set = config_setting
-        self.route_assignment_data = pd.read_csv(str(self.config_set["data_path"]) + "route_assignment2.csv")
+        self.route_assignment_data = pd.read_csv(str(self.config_set["data_path"]) + "route_assignment.csv")
         self.link_performance_data = pd.read_csv(str(self.config_set["data_path"]) + "link.csv")
 
         print(f"Number of Paths: {self.route_assignment_data.shape[0]}")
@@ -46,9 +46,9 @@ class data_generation:
                                                    'from_node_id',
                                                    'to_node_id',
                                                    #'travel_time',
-                                                   'capacity',
-                                                   'free_speed', #'fftt'
-                                                   'ref_volume_p1_car',
+                                                   "capacity",
+                                                   "fftt",
+                                                   'ref_volume',
                                                    'ref_volume_p1_truck',
                                                    'length',
                                                    ]]
@@ -58,9 +58,7 @@ class data_generation:
         # self.truck_proportion = 0.1
 
         # FIXME: set nan goes to zero
-        # self.link_df['car_vol'] = (self.link_df['volume'] * self.car_proportion).fillna(0)
-        # self.link_df['truck_vol'] = (self.link_df['volume'] * self.truck_proportion).fillna(0)
-        self.link_df['car_vol'] = (self.link_df['ref_volume_p1_car']).fillna(0)
+        self.link_df['car_vol'] = (self.link_df['ref_volume']).fillna(0)
         self.link_df['truck_vol'] = (self.link_df['ref_volume_p1_truck']).fillna(0)
         self.link_df['link_no'] = self.link_df.index
 
@@ -210,10 +208,7 @@ class data_generation:
 
     def get_bpr_params(self):
         bpr_params = {}
-        # FIXME: fftt=>free_speed, lane_capacity=>capacity
-        # bpr_params["fftt"] = tf.reshape(tf.constant(self.link_df['fftt'], dtype=tf.float32), (-1, 1))
-        # bpr_params["cap"] = tf.reshape(tf.constant(self.link_df['lane_capacity'], dtype=tf.float32), (-1, 1))
-        bpr_params["fftt"] = tf.reshape(tf.constant(self.link_df['free_speed'], dtype=tf.float32), (-1, 1))
+        bpr_params["fftt"] = tf.reshape(tf.constant(self.link_df['fftt'], dtype=tf.float32), (-1, 1))
 
         bpr_params["cap"] = tf.reshape(tf.constant(self.link_df['capacity'], dtype=tf.float32), (-1, 1))
         bpr_params["alpha"] = 0.15

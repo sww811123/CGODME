@@ -173,7 +173,20 @@ def evaluation(losses,
                                                     ]]
     path_flow_df = pd.DataFrame(optimal_path_flows, columns=["Path_Flows"])
     load_path_df = load_path_df.join(path_flow_df)
-    load_path_df.to_csv(config["data_path"] + "calibrated_results.csv", index=False)
+    load_path_df.to_csv(config["data_path"] + "calibrated_path_results.csv", index=False)
+
+    logging.info("Saving the link performance ...")
+    load_link_df = load_data.link_performance_data[[
+        "link_id",
+        "from_node_id",
+        "to_node_id",
+        "ref_volume",
+        "fftt",
+        "capacity",
+    ]]
+    link_flow_df = pd.DataFrame(estimated_link_volumes, columns=["est_link_flows"])
+    load_link_df = load_link_df.join(link_flow_df)
+    load_link_df.to_csv(config["data_path"] + "calibrated_link_results.csv", index=False)
 
     # Goodness of Fit (RMSE)
     car_prop = data_imputation["car_prop"]

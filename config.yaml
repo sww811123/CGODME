@@ -14,7 +14,7 @@ multi_objective_function_setting: # dispersion weighting factors
   zonal: 0.1 # (0 means no consideration)
 
 optimization_setting:
-  training_steps: 5
+  training_steps: 10
   learning_rates: 0.01
   penalty_coefficient: 2.0
 
