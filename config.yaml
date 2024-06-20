@@ -1,27 +1,28 @@
 # ./data/Sioux_Falls/
 # ./data/Chicago_Sketch/
-data_path: ./data/Tucscon/
-demand_randomness: True #False
+#./data/Tucson/
+data_path: ./data/Tucson/
+demand_randomness: False #False
 avail_initial_path_flow: True # UE-based path flows (i.e., DTALite Path Flows)
 
 multi_objective_function_setting: # dispersion weighting factors
   passenger_car_count: 1.0
-  truck_count: 1.0
-  passenger_car_vmt: 1.0
-  truck_vmt: 1.0
-  od_split: 1.0
-  zonal: 1.0 # (0 means no consideration)
+  truck_count: 0.01
+  passenger_car_vmt: 0.1
+  truck_vmt: 0.01
+  od_split: 0.1
+  zonal: 0.1 # (0 means no consideration)
 
 optimization_setting:
-  training_steps: 10
+  training_steps: 5
   learning_rates: 0.01
   penalty_coefficient: 2.0
 
 data_imputation:
-  car_prop: 0.9 # arbitrary proportion of passenger cars (90 percent)
-  truck_prop: 0.1 # arbitrary proportion of trucks (10 percent)
+  car_prop: 1.0
+  truck_prop: 1.0
 
-sensor_data_avail: True # False means there is no sensor data
+sensor_data_avail: False # False means there is no sensor data
 sensor_data_setting:
   obs_time_duration: # 1440 minute-based
     obs_starting_time: 420

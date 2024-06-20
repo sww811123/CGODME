@@ -8,8 +8,11 @@ class data_generation:
     def __init__(self, config_setting):
 
         self.config_set = config_setting
-        self.route_assignment_data = pd.read_csv(str(self.config_set["data_path"]) + "ue_paths.csv")
-        self.link_performance_data = pd.read_csv(str(self.config_set["data_path"]) + "ue_links.csv")
+        self.route_assignment_data = pd.read_csv(str(self.config_set["data_path"]) + "route_assignment2.csv")
+        self.link_performance_data = pd.read_csv(str(self.config_set["data_path"]) + "link.csv")
+
+        print(f"Number of Paths: {self.route_assignment_data.shape[0]}")
+        print(f"Number of Links: {self.link_performance_data.shape[0]}")
 
         if self.config_set["sensor_data_avail"]:
             self.sensor_data = pd.read_csv(str(self.config_set["data_path"]) + "sensors.csv")
@@ -37,20 +40,28 @@ class data_generation:
         self.path_df['path_id'] = self.path_df.index + 1
 
         # link data
+        # FIXME: add a config factor to rename data columns
+        # self.link_performance_data.rename(columns={"ref_volume_p1_car": "volume"}, inplace=True)
         self.link_df = self.link_performance_data[['link_id',
                                                    'from_node_id',
                                                    'to_node_id',
-                                                   'travel_time',
-                                                   'lane_capacity',
-                                                   'fftt',
-                                                   'volume',
-                                                   'distance_mile']]
+                                                   #'travel_time',
+                                                   'capacity',
+                                                   'free_speed', #'fftt'
+                                                   'ref_volume_p1_car',
+                                                   'ref_volume_p1_truck',
+                                                   'length',
+                                                   ]]
         # link data manipulation
         # FIXME: instead of using arbitrary proportions, load observed data
-        self.car_proportion = 0.9
-        self.truck_proportion = 0.1
-        self.link_df['car_vol'] = self.link_df['volume'] * self.car_proportion
-        self.link_df['truck_vol'] = self.link_df['volume'] * self.truck_proportion
+        # self.car_proportion = 0.9
+        # self.truck_proportion = 0.1
+
+        # FIXME: set nan goes to zero
+        # self.link_df['car_vol'] = (self.link_df['volume'] * self.car_proportion).fillna(0)
+        # self.link_df['truck_vol'] = (self.link_df['volume'] * self.truck_proportion).fillna(0)
+        self.link_df['car_vol'] = (self.link_df['ref_volume_p1_car']).fillna(0)
+        self.link_df['truck_vol'] = (self.link_df['ref_volume_p1_truck']).fillna(0)
         self.link_df['link_no'] = self.link_df.index
 
     def origin_layer(self):
@@ -90,11 +101,10 @@ class data_generation:
         for i in range(len(self.od_df)):
             od_id = self.od_df.loc[i, 'od_id']
             path_df_od = path_df[path_df['od_id'] == od_id].reset_index(drop=True)
-
+            # TODO: Check inconsistent sizes of matrix => the column location was shifted due to unknown columns
             for j in range(len(path_df_od)):
                 node_sequence = list(map(int, path_df_od.loc[j, 'node_sequence'].split(';')[0: -1]))
-                link_sequence = [link_no_pair_dict[(node_sequence[k], node_sequence[k + 1])]
-                                 for k in range(len(node_sequence) - 1)]
+                link_sequence = [link_no_pair_dict[(node_sequence[k], node_sequence[k + 1])] for k in range(len(node_sequence) - 1)]
 
                 if j < len(path_df_od) - 1:
                     init_path_vol.append(path_df['volume'][(path_df_od['path_id'] - 1)[j]])
@@ -200,8 +210,12 @@ class data_generation:
 
     def get_bpr_params(self):
         bpr_params = {}
-        bpr_params["fftt"] = tf.reshape(tf.constant(self.link_df['fftt'], dtype=tf.float32), (-1, 1))
-        bpr_params["cap"] = tf.reshape(tf.constant(self.link_df['lane_capacity'], dtype=tf.float32), (-1, 1))
+        # FIXME: fftt=>free_speed, lane_capacity=>capacity
+        # bpr_params["fftt"] = tf.reshape(tf.constant(self.link_df['fftt'], dtype=tf.float32), (-1, 1))
+        # bpr_params["cap"] = tf.reshape(tf.constant(self.link_df['lane_capacity'], dtype=tf.float32), (-1, 1))
+        bpr_params["fftt"] = tf.reshape(tf.constant(self.link_df['free_speed'], dtype=tf.float32), (-1, 1))
+
+        bpr_params["cap"] = tf.reshape(tf.constant(self.link_df['capacity'], dtype=tf.float32), (-1, 1))
         bpr_params["alpha"] = 0.15
         bpr_params["beta"] = 4
 

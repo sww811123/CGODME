@@ -160,14 +160,15 @@ def evaluation(losses,
     logging.info("Saving loss ...")
     get_df_losses = pd.DataFrame(losses, columns=["losses"])
     get_df_losses.index.name = "epoch"
+    # TODO: add a folder to save outputs
     get_df_losses.to_csv(config["data_path"] + "loss_results.csv")
 
     logging.info("Saving the optimal path flows ...")
-    load_path_df = load_data.route_assignment_data[["path_no",
+    load_path_df = load_data.route_assignment_data[["route_seq_id", #path_no",
                                                     "o_zone_id",
                                                     "d_zone_id",
                                                     "node_sequence",
-                                                    "link_sequence",
+                                                    "link_id_sequence", #"link_sequence",
                                                     "geometry",
                                                     ]]
     path_flow_df = pd.DataFrame(optimal_path_flows, columns=["Path_Flows"])
@@ -205,16 +206,17 @@ if __name__ == "__main__":
     path_flow = load_data.get_init_path_values(init_given=config["avail_initial_path_flow"])
     init_path_flow = path_flow
     bpr_params = load_data.get_bpr_params()
-    loaded_link_target = load_data.link_df["volume"]
+    # loaded_link_target = load_data.link_df["volume"]
+    loaded_link_target = load_data.link_df["car_vol"] +  load_data.link_df["truck_vol"]
     total_link_volume = np.array(loaded_link_target, dtype='f')
 
     sparse_matrix = {"o_od_inc": load_data.get_o_to_od_incidence_mat(), "od_path_inc": spare_od_path_inc}
     target_data = {"observed_o_volume": np.array(load_data.ozone_df["volume"], dtype="f"),
                    "observed_od_volume": np.array(load_data.od_df["volume"], dtype="f"),
-                   "total_link_volume": np.array(load_data.link_df["volume"], dtype="f"),
+                   "total_link_volume": np.array(load_data.link_df["car_vol"] + load_data.link_df["truck_vol"], dtype="f"),
                    "car_link_volume": np.array(load_data.link_df["car_vol"], dtype="f"),
                    "truck_link_volume": np.array(load_data.link_df["truck_vol"], dtype="f"),
-                   "distance_miles": np.array(load_data.link_df["distance_mile"], dtype="f")}
+                   "distance_miles": np.array(load_data.link_df["length"], dtype="f")}
 
     lagrangian_params, lambda_positive = load_data.get_lagrangian_params(path_link_inc_n, path_link_inc)
     run_optimization(od_volume=od_volume,
