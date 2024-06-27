@@ -19,7 +19,7 @@ def run_optimization(od_volume: tf.Tensor,
                      bpr_params: dict,
                      optimization_params: dict,
                      target_data: dict,
-                     data_imputation: dict,
+                     # data_imputation: dict,
                      obj_setting: dict,
                      ) -> None:
     """
@@ -35,7 +35,6 @@ def run_optimization(od_volume: tf.Tensor,
     - training_steps (int): Number of ADMM training steps.
     - target_data (dict): observed target data
     - init_path_flows (tf.Tensor): initialized path flows (either DTALite results or randomly generated)
-    - data_imputation (dict): proportion of car and truck in a given network
     - obj_setting (dict): dictionary of multi-objective dispersion parameters
 
     Returns:
@@ -65,7 +64,7 @@ def run_optimization(od_volume: tf.Tensor,
                                              target_data,
                                              init_odme_mapping_variables,
                                              optimization_params,
-                                             data_imputation,
+                                             # data_imputation,
                                              obj_setting,
                                              )
     # get the odme mapping variables using the optimal path flows
@@ -84,7 +83,7 @@ def run_optimization(od_volume: tf.Tensor,
                tf.squeeze(estimated_od_flows),
                tf.squeeze(estimated_o_flows),
                target_data,
-               data_imputation,
+               # data_imputation,
                )
     logging.info("Complete!")
 
@@ -141,7 +140,7 @@ def evaluation(losses,
                estimated_od_flows,
                estimated_o_flows,
                target_data,
-               data_imputation,
+               # data_imputation,
                ):
     """
 
@@ -189,13 +188,13 @@ def evaluation(losses,
     load_link_df.to_csv(config["data_path"] + "calibrated_link_results.csv", index=False)
 
     # Goodness of Fit (RMSE)
-    car_prop = data_imputation["car_prop"]
-    truck_prop = data_imputation["truck_prop"]
-    rmse_car_link_volumes = rmse(estimated_link_volumes * car_prop, target_data["car_link_volume"])
-    rmse_truck_link_volumes = rmse(estimated_link_volumes * truck_prop, target_data["truck_link_volume"])
-    rmse_car_vmt = rmse(estimated_link_volumes * car_prop * target_data["distance_miles"],
+    # car_prop = data_imputation["car_prop"]
+    # truck_prop = data_imputation["truck_prop"]
+    rmse_car_link_volumes = rmse(estimated_link_volumes, target_data["car_link_volume"])
+    rmse_truck_link_volumes = rmse(estimated_link_volumes, target_data["truck_link_volume"])
+    rmse_car_vmt = rmse(estimated_link_volumes * target_data["distance_miles"],
                         target_data["car_link_volume"] * target_data["distance_miles"])
-    rmse_truck_vmt = rmse(estimated_link_volumes * truck_prop * target_data["distance_miles"],
+    rmse_truck_vmt = rmse(estimated_link_volumes * target_data["distance_miles"],
                           target_data["truck_link_volume"] * target_data["distance_miles"])
     rmse_od_flows = rmse(estimated_od_flows, target_data["observed_od_volume"])
     rmse_o_flows = rmse(estimated_o_flows, target_data["observed_o_volume"])
@@ -240,6 +239,6 @@ if __name__ == "__main__":
                      bpr_params=bpr_params,
                      optimization_params=config["optimization_setting"],
                      target_data=target_data,
-                     data_imputation=config["data_imputation"],
+                     #data_imputation=config["data_imputation"],
                      obj_setting=config["multi_objective_function_setting"]
                      )
