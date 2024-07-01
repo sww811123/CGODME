@@ -8,13 +8,16 @@ class data_generation:
     def __init__(self, config_setting):
 
         self.config_set = config_setting
-        self.route_assignment_data = pd.read_csv(str(self.config_set["data_path"]) + "ue_paths.csv")
-        self.link_performance_data = pd.read_csv(str(self.config_set["data_path"]) + "ue_links.csv")
+        self.route_assignment_data = pd.read_csv(str(self.config_set["data_path"]) + "route_assignment.csv")
+        self.link_data = pd.read_csv(str(self.config_set["data_path"]) + "link.csv")
+
+        print(f"Number of Paths: {self.route_assignment_data.shape[0]}")
+        print(f"Number of Links: {self.link_data.shape[0]}")
 
         if self.config_set["sensor_data_avail"]:
             self.sensor_data = pd.read_csv(str(self.config_set["data_path"]) + "sensors.csv")
             self.imputed_sensor_data = self.sensor_data_imputation()
-            self.link_performance_data = self.get_observed_link_counts()
+            self.link_data = self.get_observed_link_counts()
 
         # origin data
         if self.config_set["demand_randomness"]:
@@ -23,34 +26,50 @@ class data_generation:
             self.route_assignment_data["volume"] = self.route_assignment_data["volume"].values.reshape(shape)  \
                                                    * random_proportions
 
-        self.ozone_df = self.route_assignment_data.groupby('o_zone_id')['volume'].sum()
-        self.ozone_df = self.ozone_df.reset_index()
-        self.ozone_df['o_node_id'] = self.ozone_df['o_zone_id']
+        if self.config_set["avail_zonal_data"]:
+            self.ozone_df = pd.read_csv(str(self.config_set["data_path"]) + "target_zone_total.csv").fillna(0)
+            self.ozone_df["o_zone_id"] = self.ozone_df["zone_id"]
+            self.ozone_df["volume"] = self.ozone_df["o_total_car"]
+            self.ozone_df['o_node_id'] = self.ozone_df['o_zone_id']
+        else:
+            self.ozone_df = self.route_assignment_data.groupby('o_zone_id')['volume'].sum()
+            self.ozone_df = self.ozone_df.reset_index()
+            self.ozone_df['o_node_id'] = self.ozone_df['o_zone_id']
 
         # origin-destination data
-        self.od_df = self.route_assignment_data.groupby(['o_zone_id', 'd_zone_id'])[['volume', 'travel_time']].sum()
-        self.od_df = self.od_df.reset_index()
-        self.od_df['od_id'] = self.od_df.index + 1
+        if self.config_set["avail_od_data"]:
+            self.od_df = pd.read_csv(str(self.config_set["data_path"]) + "target_demand_car.csv").fillna(0)
+            self.od_df['od_id'] = self.od_df.index + 1
+        else:
+            self.od_df = self.route_assignment_data.groupby(['o_zone_id', 'd_zone_id'])[['volume', 'travel_time']].sum()
+            self.od_df = self.od_df.reset_index()
+            self.od_df['od_id'] = self.od_df.index + 1
 
         # path data
         self.path_df = self.route_assignment_data[['o_zone_id', 'd_zone_id', 'node_sequence', 'volume']]
         self.path_df['path_id'] = self.path_df.index + 1
 
         # link data
-        self.link_df = self.link_performance_data[['link_id',
-                                                   'from_node_id',
-                                                   'to_node_id',
-                                                   'travel_time',
-                                                   'lane_capacity',
-                                                   'fftt',
-                                                   'volume',
-                                                   'distance_mile']]
+        # FIXME: add a config factor to rename data columns
+        self.link_df = self.link_data[[
+            'link_id',
+            'from_node_id',
+            'to_node_id',
+            "capacity",
+            "VDF_fftt",
+            'ref_volume',
+            'ref_volume_truck',
+            'length',
+        ]]
+
         # link data manipulation
         # FIXME: instead of using arbitrary proportions, load observed data
-        self.car_proportion = 0.9
-        self.truck_proportion = 0.1
-        self.link_df['car_vol'] = self.link_df['volume'] * self.car_proportion
-        self.link_df['truck_vol'] = self.link_df['volume'] * self.truck_proportion
+        # self.car_proportion = 0.9
+        # self.truck_proportion = 0.1
+
+        # FIXME: set nan goes to zero
+        self.link_df['car_vol'] = (self.link_df['ref_volume']).fillna(0)
+        self.link_df['truck_vol'] = (self.link_df['ref_volume_truck']).fillna(0)
         self.link_df['link_no'] = self.link_df.index
 
     def origin_layer(self):
@@ -90,11 +109,10 @@ class data_generation:
         for i in range(len(self.od_df)):
             od_id = self.od_df.loc[i, 'od_id']
             path_df_od = path_df[path_df['od_id'] == od_id].reset_index(drop=True)
-
+            # TODO: Check inconsistent sizes of matrix => the column location was shifted due to unknown columns
             for j in range(len(path_df_od)):
                 node_sequence = list(map(int, path_df_od.loc[j, 'node_sequence'].split(';')[0: -1]))
-                link_sequence = [link_no_pair_dict[(node_sequence[k], node_sequence[k + 1])]
-                                 for k in range(len(node_sequence) - 1)]
+                link_sequence = [link_no_pair_dict[(node_sequence[k], node_sequence[k + 1])] for k in range(len(node_sequence) - 1)]
 
                 if j < len(path_df_od) - 1:
                     init_path_vol.append(path_df['volume'][(path_df_od['path_id'] - 1)[j]])
@@ -200,8 +218,9 @@ class data_generation:
 
     def get_bpr_params(self):
         bpr_params = {}
-        bpr_params["fftt"] = tf.reshape(tf.constant(self.link_df['fftt'], dtype=tf.float32), (-1, 1))
-        bpr_params["cap"] = tf.reshape(tf.constant(self.link_df['lane_capacity'], dtype=tf.float32), (-1, 1))
+        bpr_params["fftt"] = tf.reshape(tf.constant(self.link_df['VDF_fftt'], dtype=tf.float32), (-1, 1))
+
+        bpr_params["cap"] = tf.reshape(tf.constant(self.link_df['capacity'], dtype=tf.float32), (-1, 1))
         bpr_params["alpha"] = 0.15
         bpr_params["beta"] = 4
 
@@ -234,7 +253,7 @@ class data_generation:
 
         # to avoid modifying the original data
         obs_based_link_data = self.imputed_sensor_data.copy()
-        ue_based_link_data = self.link_performance_data.copy()
+        ue_based_link_data = self.link_data.copy()
         obs_based_link_data["obs_links"] = self.get_link_pair(obs_based_link_data)
         ue_based_link_data["ue_links"] = self.get_link_pair(ue_based_link_data)
 
@@ -247,7 +266,7 @@ class data_generation:
                 store_matched_idx.append(find_idx[0])
                 store_obs_link_vol.append(obs_link_vol)
         logging.info(f"The total number of re-updating links: {len(store_matched_idx)}")
-        logging.info(f"The sum of the initial link volumes matched with sensors: {self.link_performance_data.loc[store_matched_idx].volume.sum()}")
+        logging.info(f"The sum of the initial link volumes matched with sensors: {self.link_data.loc[store_matched_idx].volume.sum()}")
         logging.info(f"The sum of the renewed link volumes matched with sensors: {ue_based_link_data.loc[store_matched_idx].volume.sum()}")
         if ue_based_link_data["volume"].isna().sum() != 0:
             raise ValueError("There exist NaN values")
