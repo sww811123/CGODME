@@ -1,76 +1,52 @@
 import pandas as pd
-import numpy as np
 import tensorflow as tf
-import logging
 
 
 class data_generation:
     def __init__(self, config_setting):
 
+        # load configuration factors and input data
         self.config_set = config_setting
         self.route_assignment_data = pd.read_csv(str(self.config_set["data_path"]) + "route_assignment.csv")
         self.link_data = pd.read_csv(str(self.config_set["data_path"]) + "link.csv")
+        self.link_perform_data = pd.read_csv(str(self.config_set["data_path"] + "link_performance.csv"))
 
-        print(f"Number of Paths: {self.route_assignment_data.shape[0]}")
-        print(f"Number of Links: {self.link_data.shape[0]}")
-
-        if self.config_set["sensor_data_avail"]:
-            self.sensor_data = pd.read_csv(str(self.config_set["data_path"]) + "sensors.csv")
-            self.imputed_sensor_data = self.sensor_data_imputation()
-            self.link_data = self.get_observed_link_counts()
-
-        # origin data
-        if self.config_set["demand_randomness"]:
-            shape = (len(self.route_assignment_data), 1)
-            random_proportions = np.random.uniform(low=0.1, high=2.0, size=shape)
-            self.route_assignment_data["volume"] = self.route_assignment_data["volume"].values.reshape(shape)  \
-                                                   * random_proportions
-
-        if self.config_set["avail_zonal_data"]:
-            self.ozone_df = pd.read_csv(str(self.config_set["data_path"]) + "target_zone_total.csv").fillna(0)
-            self.ozone_df["o_zone_id"] = self.ozone_df["zone_id"]
-            self.ozone_df["volume"] = self.ozone_df["o_total_car"]
-            self.ozone_df['o_node_id'] = self.ozone_df['o_zone_id']
-        else:
-            self.ozone_df = self.route_assignment_data.groupby('o_zone_id')['volume'].sum()
-            self.ozone_df = self.ozone_df.reset_index()
-            self.ozone_df['o_node_id'] = self.ozone_df['o_zone_id']
+        # origin (zonal) data
+        self.ozone_df = self.route_assignment_data.groupby('o_zone_id')['volume'].sum()
+        self.ozone_df = self.ozone_df.reset_index()
+        self.ozone_df['o_node_id'] = self.ozone_df['o_zone_id']
 
         # origin-destination data
-        if self.config_set["avail_od_data"]:
-            self.od_df = pd.read_csv(str(self.config_set["data_path"]) + "target_demand_car.csv").fillna(0)
-            self.od_df['od_id'] = self.od_df.index + 1
-        else:
-            self.od_df = self.route_assignment_data.groupby(['o_zone_id', 'd_zone_id'])[['volume', 'travel_time']].sum()
-            self.od_df = self.od_df.reset_index()
-            self.od_df['od_id'] = self.od_df.index + 1
+        self.od_df = self.route_assignment_data.groupby(['o_zone_id', 'd_zone_id'])[['volume', 'travel_time']].sum()
+        self.od_df = self.od_df.reset_index()
+        self.od_df['od_id'] = self.od_df.index + 1
 
         # path data
         self.path_df = self.route_assignment_data[['o_zone_id', 'd_zone_id', 'node_sequence', 'volume']]
         self.path_df['path_id'] = self.path_df.index + 1
 
         # link data
-        # FIXME: add a config factor to rename data columns
+        self.link_data = self.link_data.merge(self.link_perform_data[["from_node_id", "to_node_id", "distance_mile"]],
+                                              on=["from_node_id", "to_node_id"], how="inner")
         self.link_df = self.link_data[[
             'link_id',
             'from_node_id',
             'to_node_id',
+            "lanes",
             "capacity",
             "VDF_fftt",
             'ref_volume',
             'ref_volume_truck',
-            'length',
+            'distance_mile',
         ]]
-
-        # link data manipulation
-        # FIXME: instead of using arbitrary proportions, load observed data
-        # self.car_proportion = 0.9
-        # self.truck_proportion = 0.1
-
-        # FIXME: set nan goes to zero
         self.link_df['car_vol'] = (self.link_df['ref_volume']).fillna(0)
         self.link_df['truck_vol'] = (self.link_df['ref_volume_truck']).fillna(0)
         self.link_df['link_no'] = self.link_df.index
+
+        print(f"Number of Origins: {self.ozone_df.shape[0]}")
+        print(f"Number of Origin-Destination Pairs: {self.od_df.shape[0]}")
+        print(f"Number of Paths: {self.route_assignment_data.shape[0]}")
+        print(f"Number of Links: {self.link_data.shape[0]}")
 
     def origin_layer(self):
         # origin layer
@@ -109,7 +85,6 @@ class data_generation:
         for i in range(len(self.od_df)):
             od_id = self.od_df.loc[i, 'od_id']
             path_df_od = path_df[path_df['od_id'] == od_id].reset_index(drop=True)
-            # TODO: Check inconsistent sizes of matrix => the column location was shifted due to unknown columns
             for j in range(len(path_df_od)):
                 node_sequence = list(map(int, path_df_od.loc[j, 'node_sequence'].split(';')[0: -1]))
                 link_sequence = [link_no_pair_dict[(node_sequence[k], node_sequence[k + 1])] for k in range(len(node_sequence) - 1)]
@@ -147,45 +122,13 @@ class data_generation:
                 o_od_num += 1
 
         return o_od_idx_list
-    def incidence_mat_path_link(self):
-        path_df = self.od_to_path_layer()
-        link_df = self.link_df
-
-        link_df['link_pair'] = link_df.apply(lambda x: (int(x.from_node_id), int(x.to_node_id)), axis=1)
-        link_id_pair_dict = link_df[['link_id', 'link_pair']].set_index('link_pair').to_dict()['link_id']
-
-        path_link_inc_mat = np.zeros([path_df.shape[0], link_df.shape[0]])
-        for i in range(path_df.shape[0]):
-            path_r = path_df.loc[i]
-            node_list = path_r.node_sequence.split(';')[0: -1]
-            for link_l in range(len(node_list) - 1):
-                link_pair = (int(node_list[len(node_list) - 2 - link_l]), int(node_list[len(node_list) - 1 - link_l]))
-                link_id = link_id_pair_dict[link_pair]
-                path_link_inc_mat[int(path_r.path_id - 1)][int(link_id - 1)] = 1.0
-
-        return path_link_inc_mat
-
-    def incidence_mat_exp(self):
-        # To count the number of x_f flow variables
-        link_no_pair_dict = self.path_link_layer()
-        path_df = self.od_to_path_layer()
-        path_no1 = 0
-        path1_link_idx_list = []
-        for i in range(len(self.od_df)):
-            od_id = self.od_df.loc[i, 'od_id']
-            path_df_od = path_df[path_df['od_id'] == od_id].reset_index(drop=True)
-
-            for j in range(len(path_df_od)):
-                node_sequence = list(map(int, path_df_od.loc[j, 'node_sequence'].split(';')[0: -1]))
-                link_sequence = [link_no_pair_dict[(node_sequence[k], node_sequence[k + 1])] for k in range(len(node_sequence) - 1)]
-
-                for link_id in link_sequence:
-                    path1_link_idx_list.append((path_no1, link_id))
-                path_no1 += 1
-
-        return path1_link_idx_list
 
     def reformed_incidence_mat(self):
+        """
+        Reformat the data structure as a sparse matrix.
+        Returns:
+
+        """
         od_path1_idx_list, path1_link_idx_list, path2_link_idx_list, init_path_flow = self.incidence_mat()
         num_link = self.link_df.shape[0]
         od_volume = tf.reshape(tf.constant(self.od_df['volume'], dtype=tf.float32), (-1, 1))
@@ -206,13 +149,10 @@ class data_generation:
 
         return sparse_o_od_inc
 
-    def get_init_path_values(self, init_given=False):
-        _, _, path_link_inc, _, init_path_flow = self.reformed_incidence_mat()
+    def get_init_path_values(self):
+        _, _, _, _, init_path_flow = self.reformed_incidence_mat()
 
-        if init_given:
-            path_flow = tf.Variable(init_path_flow, dtype=tf.float32)  # DTALite initial values
-        else:
-            path_flow = tf.Variable(tf.random.uniform([path_link_inc.shape[0]], minval=0, maxval=100)) # randomly drawn
+        path_flow = tf.Variable(init_path_flow, dtype=tf.float32)  # DTALite UE Path Flows
 
         return path_flow
 
@@ -220,7 +160,8 @@ class data_generation:
         bpr_params = {}
         bpr_params["fftt"] = tf.reshape(tf.constant(self.link_df['VDF_fftt'], dtype=tf.float32), (-1, 1))
 
-        bpr_params["cap"] = tf.reshape(tf.constant(self.link_df['capacity'], dtype=tf.float32), (-1, 1))
+        bpr_params["cap"] = tf.reshape(tf.constant(self.link_df["capacity"] \
+                                                   * self.link_df["lanes"], dtype=tf.float32), (-1, 1))
         bpr_params["alpha"] = 0.15
         bpr_params["beta"] = 4
 
@@ -234,44 +175,3 @@ class data_generation:
         init_lambda_values = tf.zeros((len(path_link_inc_n) + len(path_link_inc), 1), tf.float32)
 
         return lagrangian_params, init_lambda_values
-
-    def sensor_data_imputation(self):
-        # get the specified starting time and duration (from the yaml file)
-        start_time = self.config_set["sensor_data_setting"]["obs_time_duration"]["obs_starting_time"]
-        end_time = self.config_set["sensor_data_setting"]["obs_time_duration"]["obs_ending_time"]
-
-        # get the average link count values based on starting and end time
-        specified_sensor_df = self.sensor_data[(self.sensor_data["start_time_in_min"]>=start_time) &
-                                               (self.sensor_data["end_time_in_min"]<=end_time)].reset_index(drop=True)
-        get_avg_link_count_df = specified_sensor_df.groupby([
-            "from_node_id", "to_node_id"]).mean("link_count").reset_index()
-        select_columns = ["from_node_id", "to_node_id", "link_count"]
-
-        return get_avg_link_count_df[select_columns]
-
-    def get_observed_link_counts(self):
-
-        # to avoid modifying the original data
-        obs_based_link_data = self.imputed_sensor_data.copy()
-        ue_based_link_data = self.link_data.copy()
-        obs_based_link_data["obs_links"] = self.get_link_pair(obs_based_link_data)
-        ue_based_link_data["ue_links"] = self.get_link_pair(ue_based_link_data)
-
-        store_matched_idx = []
-        store_obs_link_vol = []
-        for obs_link_vol, obs_link in zip(obs_based_link_data["link_count"], obs_based_link_data["obs_links"]):
-            find_idx = ue_based_link_data[ue_based_link_data["ue_links"] == obs_link].index
-            if not find_idx.empty:
-                ue_based_link_data.loc[find_idx, "volume"] = obs_link_vol
-                store_matched_idx.append(find_idx[0])
-                store_obs_link_vol.append(obs_link_vol)
-        logging.info(f"The total number of re-updating links: {len(store_matched_idx)}")
-        logging.info(f"The sum of the initial link volumes matched with sensors: {self.link_data.loc[store_matched_idx].volume.sum()}")
-        logging.info(f"The sum of the renewed link volumes matched with sensors: {ue_based_link_data.loc[store_matched_idx].volume.sum()}")
-        if ue_based_link_data["volume"].isna().sum() != 0:
-            raise ValueError("There exist NaN values")
-        return ue_based_link_data
-
-    @staticmethod
-    def get_link_pair(link_data):
-        return link_data.apply(lambda row: (int(row["from_node_id"]), int(row["to_node_id"])), axis=1)

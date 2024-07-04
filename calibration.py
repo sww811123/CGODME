@@ -1,6 +1,6 @@
 from functools import partial
 import tensorflow as tf
-
+import numpy as np
 
 # @tf.function
 def odme_mapping_variables(path_flow_: tf.Tensor,
@@ -49,7 +49,7 @@ def odme_mapping_variables(path_flow_: tf.Tensor,
     optimal_path_flows["one_od_pair"] = path_flow_n
     optimal_path_flows["multi_od_pairs"] = path_flow_
 
-    return link_flow, od_flows, o_flows, optimal_path_flows
+    return link_flow, link_cost, od_flows, o_flows, optimal_path_flows
 
 # @tf.function
 def multi_objective_loss(path_flow,
@@ -59,10 +59,10 @@ def multi_objective_loss(path_flow,
                          path_link_inc_n,
                          bpr_params,
                          target_data,
-                         data_imputation,
                          obj_setting,
                          init_odme_mapping_vars,
                          optimization_params,
+                         access_data_sources,
                          ):
     """
 
@@ -76,21 +76,27 @@ def multi_objective_loss(path_flow,
         target_data:
         data_imputation:
         obj_setting:
+        access_data_sources:
 
     Returns:
 
     """
-    est_link_volumes, est_od_flows, est_o_flows, _ = odme_mapping_variables(path_flow,
-                                                                            od_volume,
-                                                                            sparse_matrix,
-                                                                            path_link_inc,
-                                                                            path_link_inc_n,
-                                                                            bpr_params)
+    est_link_volumes, est_link_costs, est_od_flows, est_o_flows, _ = odme_mapping_variables(path_flow,
+                                                                                            od_volume,
+                                                                                            sparse_matrix,
+                                                                                            path_link_inc,
+                                                                                            path_link_inc_n,
+                                                                                            bpr_params
+                                                                                            )
 
     def mse(estimation, observation):
         # Reshaping the estimated and observed arrays to avoid OOM
-        reshape_estimation = tf.reshape(estimation, (estimation.shape[0], ))
-        reshape_observation = tf.reshape(observation, (observation.shape[0], ))
+        if len(estimation.shape) == 0:
+            reshape_estimation = estimation
+            reshape_observation = observation
+        else:
+            reshape_estimation = tf.reshape(estimation, (estimation.shape[0], ))
+            reshape_observation = tf.reshape(observation, (observation.shape[0], ))
 
         # calculate mean square error
         mean_square_err = tf.reduce_mean(tf.subtract(reshape_estimation, reshape_observation) ** 2)
@@ -106,29 +112,51 @@ def multi_objective_loss(path_flow,
     def positivity_constraints(penalty_coeffi, var):
         return tf.reduce_sum(penalty_coeffi * tf.nn.relu(-var) ** 2)
 
-    def get_vmt(link_volume, link_dist):
-        return tf.squeeze(link_volume) * link_dist
+    def get_vmt(link_volume:tf.Tensor,
+                link_dist: tf.Tensor):
+        """
+        Compute total vehicle miles traveled (region level)
+        Args:
+            link_volume: counted number of vehicles observed in links
+            link_dist: distance miles
 
-    car_prop = data_imputation["car_prop"]
-    truck_prop = data_imputation["truck_prop"]
-    link_dist = target_data["distance_miles"]
-    loss = obj_setting["passenger_car_count"] * scaled_mse(init_odme_mapping_vars["link_counts"] * car_prop,
-                                                           est_link_volumes * car_prop,
-                                                           target_data["car_link_volume"]) \
-           + obj_setting["truck_count"] * scaled_mse(init_odme_mapping_vars["link_counts"] * truck_prop,
-                                                     est_link_volumes * truck_prop,
-                                                     target_data["truck_link_volume"]) \
-           + obj_setting["passenger_car_vmt"] * scaled_mse(
-        get_vmt(init_odme_mapping_vars["link_counts"] * car_prop, link_dist),
-        get_vmt(est_link_volumes * car_prop, link_dist),
-        get_vmt(target_data["car_link_volume"], link_dist)) \
-           + obj_setting["truck_vmt"] * scaled_mse(
-        get_vmt(init_odme_mapping_vars["link_counts"] * truck_prop, link_dist),
-        get_vmt(est_link_volumes * truck_prop, link_dist),
-        get_vmt(target_data["truck_link_volume"], link_dist)) \
-           + obj_setting["od_split"] * scaled_mse(init_odme_mapping_vars["od_flows"], est_od_flows,
+        Returns:
+
+        """
+        return tf.reduce_sum(tf.squeeze(link_volume) * link_dist, axis=0)
+
+    def get_vht(link_cost:tf.Tensor):
+
+        return tf.reduce_sum(tf.squeeze(link_cost), axis=0)
+
+    link_dist = np.array(access_data_sources.link_df["distance_mile"], dtype="f")
+    # FIXME: Currently, UE-based path flows only present passenger car-based path flows
+    #  such that it is necessary to obtain two different UE path flows to fit each target volume.
+    loss = obj_setting["passenger_car_count"] * scaled_mse(init_odme_mapping_vars["link_counts"],
+                                                           est_link_volumes,
+                                                           target_data["link_count_car"]) \
+           + obj_setting["passenger_car_vmt"] * scaled_mse(get_vmt(init_odme_mapping_vars["link_counts"], link_dist),
+                                                           get_vmt(est_link_volumes, link_dist),
+                                                           target_data["VMT_car"]) \
+           + obj_setting["passenger_car_vht"] * scaled_mse(get_vht(init_odme_mapping_vars["link_costs"]),
+                                                           get_vht(est_link_costs),
+                                                           target_data["VHT_car"],
+                                                           )\
+           + obj_setting["truck_count"] * scaled_mse(init_odme_mapping_vars["link_counts"],
+                                                     est_link_volumes,
+                                                     target_data["link_count_truck"]) \
+           + obj_setting["truck_vmt"] * scaled_mse(get_vmt(init_odme_mapping_vars["link_counts"], link_dist),
+                                                   get_vmt(est_link_volumes, link_dist),
+                                                   target_data["VMT_truck"]) \
+           + obj_setting["truck_vht"] * scaled_mse(get_vht(init_odme_mapping_vars["link_costs"]),
+                                                           get_vht(est_link_costs),
+                                                           target_data["VHT_truck"],
+                                                           )\
+           + obj_setting["od_split"] * scaled_mse(init_odme_mapping_vars["od_flows"],
+                                                  est_od_flows,
                                                   target_data["observed_od_volume"]) \
-           + obj_setting["zonal"] * scaled_mse(init_odme_mapping_vars["o_flows"], est_o_flows,
+           + obj_setting["zonal"] * scaled_mse(init_odme_mapping_vars["o_flows"],
+                                               est_o_flows,
                                                target_data["observed_o_volume"]) \
            + positivity_constraints(optimization_params["penalty_coefficient"], path_flow)
     return loss
@@ -144,8 +172,8 @@ def optimization(path_flow,
                  target_data,
                  init_odme_mapping_variables,
                  optimization_params,
-                 data_imputation,
                  obj_setting,
+                 access_data_sources,
                  ):
     """
 
@@ -161,6 +189,7 @@ def optimization(path_flow,
         optimization_params:
         data_imputation:
         obj_setting:
+        access_data_sources:
 
     Returns:
 
@@ -173,10 +202,10 @@ def optimization(path_flow,
                            path_link_inc_n=path_link_inc_n,
                            bpr_params=bpr_params,
                            target_data=target_data,
-                           data_imputation=data_imputation,
                            obj_setting=obj_setting,
                            init_odme_mapping_vars=init_odme_mapping_variables,
                            optimization_params=optimization_params,
+                           access_data_sources=access_data_sources,
                            )
 
     # FIXME: convergence stopping rule
