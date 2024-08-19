@@ -15,7 +15,6 @@ logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.DEBUG)  # 
 def run_optimization(od_volume: tf.Tensor,
                      sparse_matrix: dict,
                      path_link_inc: tf.Tensor,
-                     path_link_inc_n: tf.Tensor,
                      path_flow: tf.Tensor,
                      bpr_params: dict,
                      optimization_params: dict,
@@ -30,7 +29,6 @@ def run_optimization(od_volume: tf.Tensor,
     - od_volume (tf.Tensor): Origin-Destination (OD) volume matrix.
     - sparse_matrix (dict): Sparse incidence matrix (e.g., mapping origin-destination into paths).
     - path_link_inc (tf.Tensor): Path-link incidence matrix.
-    - path_link_inc_n (tf.Tensor): Path-link incidence matrix with one pair.
     - path_flow (tf.Tensor): Initial path flows.
     - bpr_params (dict): Parameters for the BPR (Bureau of Public Roads) function.
     - training_steps (int): Number of ADMM training steps.
@@ -46,10 +44,8 @@ def run_optimization(od_volume: tf.Tensor,
     init_odme_mapping_variables = {}
     # get the initialized odme mapping variables
     init_link_volumes, init_link_costs, init_od_flows, init_o_flows, _ = odme_mapping_variables(path_flow,
-                                                                                               od_volume,
                                                                                                sparse_matrix,
                                                                                                path_link_inc,
-                                                                                               path_link_inc_n,
                                                                                                bpr_params)
     init_odme_mapping_variables["link_counts"] = init_link_volumes
     init_odme_mapping_variables["link_costs"] = init_link_costs
@@ -62,7 +58,6 @@ def run_optimization(od_volume: tf.Tensor,
                                              od_volume,
                                              sparse_matrix,
                                              path_link_inc,
-                                             path_link_inc_n,
                                              target_data,
                                              init_odme_mapping_variables,
                                              optimization_params,
@@ -73,12 +68,11 @@ def run_optimization(od_volume: tf.Tensor,
     estimated_link_volumes, estimated_link_costs, estimated_od_flows, estimated_o_flows, optimal_paths = \
         odme_mapping_variables(
                                 optimal_path_flow,
-                                od_volume,
                                 sparse_matrix,
                                 path_link_inc,
-                                path_link_inc_n,
                                 bpr_params
         )
+
 
     concat_path_flows = get_path_flow_columns(load_data, optimal_paths)
     link_dist = np.array(access_data_sources.link_df["distance_mile"], dtype="f")
@@ -108,19 +102,14 @@ def get_path_flow_columns(data_source, optimal_paths):
     path_layer = data_source.od_to_path_layer()
     restore_path_flows = []
     multi_od_pair_idx = 0
-    one_od_pair_idx = 0
 
     for i in range(len(od_layer)):
         od_id = od_layer.loc[i, 'od_id']
         od_path = path_layer[path_layer['od_id'] == od_id].reset_index(drop=True)
 
         for j in range(len(od_path)):
-            if j < len(od_path) - 1:
-                restore_path_flows.append(optimal_paths["multi_od_pairs"][multi_od_pair_idx].numpy().item())
-                multi_od_pair_idx += 1
-            else:
-                restore_path_flows.append(optimal_paths["one_od_pair"][one_od_pair_idx].numpy().item())
-                one_od_pair_idx += 1
+            restore_path_flows.append(optimal_paths["multi_od_pairs"][multi_od_pair_idx].numpy().item())
+            multi_od_pair_idx += 1
 
     return restore_path_flows
 
@@ -176,53 +165,65 @@ def evaluation(losses,
 
     get_df_losses.to_csv(output_dir + "loss_results.csv")
 
-    logging.info("Saving the optimal path flows ...")
-    load_path_df = load_data.route_assignment_data[["route_seq_id", #"path_no"
+    logging.info("Saving the calibrated o flows ...")
+    load_o_df = load_data.o_target_data
+    load_o_df["est_o_flows"] = estimated_o_flows
+    load_o_df.to_csv(output_dir + "calibrated_o_flows.csv", index=False)
+
+    logging.info("Saving the calibrated od flows ...")
+    load_od_df = load_data.od_target_data
+    load_od_df["est_od_flows"] = estimated_od_flows
+    load_od_df.to_csv(output_dir + "calibrated_od_flows.csv", index=False)
+
+    logging.info("Saving the calibrated path flows ...")
+    # FIXME: data column name consistency (#path_no or route_seq_id? and "link_id_sequence" or "link_sequence)
+    load_path_df = load_data.route_assignment_data[["path_no",
                                                     "o_zone_id",
                                                     "d_zone_id",
                                                     "node_sequence",
-                                                    "link_id_sequence", #"link_sequence",
+                                                    "link_sequence",
                                                     "geometry",
                                                     ]]
     path_flow_df = pd.DataFrame(optimal_path_flows, columns=["Path_Flows"])
     load_path_df = load_path_df.join(path_flow_df)
-    load_path_df.to_csv(output_dir + "calibrated_path_results.csv", index=False)
+    load_path_df.to_csv(output_dir + "calibrated_path_flows.csv", index=False)
 
-    logging.info("Saving the link performance ...")
+    logging.info("Saving the calibrated link flows ...")
+    # FIXME: data column name consistency ("VDF_fftt or fftt" and "capacity" or lane_capacity"?)
     load_link_df = load_data.link_data[[
         "link_id",
         "from_node_id",
         "to_node_id",
         "ref_volume",
-        "VDF_fftt",
-        "capacity",
+        "fftt",
+        "lane_capacity",
         "lanes",
     ]]
     link_flow_df = pd.DataFrame(estimated_link_volumes, columns=["est_link_flows"])
     load_link_df = load_link_df.join(link_flow_df)
-    load_link_df.to_csv(output_dir + "calibrated_link_results.csv", index=False)
+    load_link_df.to_csv(output_dir + "calibrated_link_flows.csv", index=False)
 
     # Performance validation using RMSE
     rmse_car_link_volumes = rmse(estimated_link_volumes, target_data["link_count_car"])
-    rmse_truck_link_volumes = rmse(estimated_link_volumes, target_data["link_count_truck"])
+    # rmse_truck_link_volumes = rmse(estimated_link_volumes, target_data["link_count_truck"])
     rmse_car_vmt = rmse(np.sum(estimated_link_volumes * link_dist),
                         target_data["VMT_car"])
-    rmse_truck_vmt = rmse(np.sum(estimated_link_volumes * link_dist),
-                            target_data["VMT_truck"])
-    rmse_car_vht = rmse(np.sum(estimated_link_costs),
-                        target_data["VHT_car"])
-    rmse_truck_vht = rmse(np.sum(estimated_link_costs),
-                          target_data["VHT_truck"])
+    # rmse_truck_vmt = rmse(np.sum(estimated_link_volumes * link_dist),
+    #                         target_data["VMT_truck"])
+    # rmse_car_vht = rmse(np.sum(estimated_link_costs),
+    #                     target_data["VHT_car"])
+    # rmse_truck_vht = rmse(np.sum(estimated_link_costs),
+    #                       target_data["VHT_truck"])
     rmse_od_flows = rmse(estimated_od_flows, target_data["observed_od_volume"])
     rmse_o_flows = rmse(estimated_o_flows, target_data["observed_o_volume"])
 
     # logging messages
     logging.info(f"RMSE: Passenger Car Count: {rmse_car_link_volumes}")
     logging.info(f"RMSE: Passenger Car VMT: {rmse_car_vmt}")
-    logging.info(f"RMSE: Passenger Car VHT: {rmse_car_vht}")
-    logging.info(f"RMSE: Truck Count: {rmse_truck_link_volumes}")
-    logging.info(f"RMSE: Truck VMT: {rmse_truck_vmt}")
-    logging.info(f"RMSE: Truck VHT: {rmse_truck_vht}")
+    # logging.info(f"RMSE: Passenger Car VHT: {rmse_car_vht}")
+    # logging.info(f"RMSE: Truck Count: {rmse_truck_link_volumes}")
+    # logging.info(f"RMSE: Truck VMT: {rmse_truck_vmt}")
+    # logging.info(f"RMSE: Truck VHT: {rmse_truck_vht}")
     logging.info(f"RMSE: OD Flow: {rmse_od_flows}")
     logging.info(f"RMSE: O Flow: {rmse_o_flows}")
 
@@ -233,7 +234,7 @@ if __name__ == "__main__":
         config = yaml.safe_load(file)
 
     load_data = data_generation(config)
-    od_volume, spare_od_path_inc, path_link_inc, path_link_inc_n, _, = load_data.reformed_incidence_mat()
+    od_volume, spare_od_path_inc, path_link_inc, _, = load_data.reformed_incidence_mat()
     path_flow = load_data.get_init_path_values()
     bpr_params = load_data.get_bpr_params()
 
@@ -241,21 +242,20 @@ if __name__ == "__main__":
                      "od_path_inc": spare_od_path_inc}
 
     target_data = {
-        "observed_o_volume": np.array(load_data.ozone_df["volume"], dtype="f"),
-        "observed_od_volume": np.array(load_data.od_df["volume"], dtype="f"),
-        "link_count_car": np.array(load_data.link_df["car_vol"], dtype="f"),
-        "link_count_truck": np.array(load_data.link_df["truck_vol"], dtype="f"),
+        "observed_o_volume": np.array(load_data.o_target_data["volume"], dtype="f"),
+        "observed_od_volume": np.array(load_data.od_target_data["volume"], dtype="f"),
+        "link_count_car": np.array(load_data.link_target_data["link_count_car_volumes"], dtype="f"),
+        # "link_count_truck": np.array(load_data.link_df["truck_vol"], dtype="f"),
         "VMT_car": np.array(config["network_observation"]["passenger_car_VMT"], dtype="f"),
-        "VMT_truck": np.array(config["network_observation"]["passenger_truck_VMT"], dtype="f"),
-        "VHT_car":  np.array(config["network_observation"]["passenger_car_VHT"], dtype="f"),
-        "VHT_truck": np.array(config["network_observation"]["passenger_truck_VHT"], dtype="f"),
+        # "VMT_truck": np.array(config["network_observation"]["passenger_truck_VMT"], dtype="f"),
+        # "VHT_car":  np.array(config["network_observation"]["passenger_car_VHT"], dtype="f"),
+        # "VHT_truck": np.array(config["network_observation"]["passenger_truck_VHT"], dtype="f"),
                    }
 
-    lagrangian_params, lambda_positive = load_data.get_lagrangian_params(path_link_inc_n, path_link_inc)
+    lagrangian_params, lambda_positive = load_data.get_lagrangian_params(path_link_inc)
     run_optimization(od_volume=od_volume,
                      sparse_matrix=sparse_matrix,
                      path_link_inc=path_link_inc,
-                     path_link_inc_n=path_link_inc_n,
                      path_flow=path_flow,
                      bpr_params=bpr_params,
                      optimization_params=config["optimization_setting"],
