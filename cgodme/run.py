@@ -3,9 +3,8 @@ import tensorflow as tf
 import pandas as pd
 import numpy as np
 import os
-from data import data_generation
-from calibration import odme_mapping_variables, optimization
-import yaml
+from .data import data_generation
+from .calibration import odme_mapping_variables, optimization
 import logging
 
 warnings.filterwarnings('ignore')  # ignore warning messages
@@ -21,6 +20,7 @@ def run_optimization(od_volume: tf.Tensor,
                      target_data: dict,
                      obj_setting: dict,
                      access_data_sources,
+                     output_path,
                      ) -> None:
     """
     Compute multi-objective optimization loss functions to adjust user equilibrium path flows
@@ -74,7 +74,7 @@ def run_optimization(od_volume: tf.Tensor,
         )
 
 
-    concat_path_flows = get_path_flow_columns(load_data, optimal_paths)
+    concat_path_flows = get_path_flow_columns(access_data_sources, optimal_paths)
     link_dist = np.array(access_data_sources.link_df["distance_mile"], dtype="f")
     evaluation(losses,
                concat_path_flows,
@@ -84,6 +84,8 @@ def run_optimization(od_volume: tf.Tensor,
                tf.squeeze(estimated_o_flows),
                target_data,
                link_dist,
+               access_data_sources,
+               output_path,
                )
     logging.info("Complete!")
 
@@ -137,6 +139,8 @@ def evaluation(losses,
                estimated_o_flows,
                target_data,
                link_dist,
+               access_data_sources,
+               output_path,
                ):
     """
 
@@ -156,7 +160,7 @@ def evaluation(losses,
     get_df_losses = pd.DataFrame(losses, columns=["losses"])
     get_df_losses.index.name = "epoch"
 
-    output_dir = config["output_path"]
+    output_dir = output_path
 
     # Check if the folder exists
     if not os.path.exists(output_dir):
@@ -166,18 +170,18 @@ def evaluation(losses,
     get_df_losses.to_csv(output_dir + "loss_results.csv")
 
     logging.info("Saving the calibrated o flows ...")
-    load_o_df = load_data.o_target_data
+    load_o_df = access_data_sources.o_target_data
     load_o_df["est_o_flows"] = estimated_o_flows
     load_o_df.to_csv(output_dir + "calibrated_o_flows.csv", index=False)
 
     logging.info("Saving the calibrated od flows ...")
-    load_od_df = load_data.od_target_data
+    load_od_df = access_data_sources.od_target_data
     load_od_df["est_od_flows"] = estimated_od_flows
     load_od_df.to_csv(output_dir + "calibrated_od_flows.csv", index=False)
 
     logging.info("Saving the calibrated path flows ...")
     # FIXME: data column name consistency (#path_no or route_seq_id? and "link_id_sequence" or "link_sequence)
-    load_path_df = load_data.route_assignment_data[["path_no",
+    load_path_df = access_data_sources.route_assignment_data[["path_no",
                                                     "o_zone_id",
                                                     "d_zone_id",
                                                     "node_sequence",
@@ -190,7 +194,7 @@ def evaluation(losses,
 
     logging.info("Saving the calibrated link flows ...")
     # FIXME: data column name consistency ("VDF_fftt or fftt" and "capacity" or lane_capacity"?)
-    load_link_df = load_data.link_data[[
+    load_link_df = access_data_sources.link_data[[
         "link_id",
         "from_node_id",
         "to_node_id",
@@ -221,45 +225,8 @@ def evaluation(losses,
     logging.info(f"RMSE: Passenger Car Count: {rmse_car_link_volumes}")
     logging.info(f"RMSE: Passenger Car VMT: {rmse_car_vmt}")
     # logging.info(f"RMSE: Passenger Car VHT: {rmse_car_vht}")
-    # logging.info(f"RMSE: Truck Count: {rmse_truck_link_volumes}")
+    # logging.info(f"RMSE: Truck Count: {rmse_truck_link_volumes}")ß
     # logging.info(f"RMSE: Truck VMT: {rmse_truck_vmt}")
     # logging.info(f"RMSE: Truck VHT: {rmse_truck_vht}")
     logging.info(f"RMSE: OD Flow: {rmse_od_flows}")
     logging.info(f"RMSE: O Flow: {rmse_o_flows}")
-
-
-if __name__ == "__main__":
-    # Load YAML configuration file
-    with open('config.yaml', 'r') as file:
-        config = yaml.safe_load(file)
-
-    load_data = data_generation(config)
-    od_volume, spare_od_path_inc, path_link_inc, _, = load_data.reformed_incidence_mat()
-    path_flow = load_data.get_init_path_values()
-    bpr_params = load_data.get_bpr_params()
-
-    sparse_matrix = {"o_od_inc": load_data.get_o_to_od_incidence_mat(),
-                     "od_path_inc": spare_od_path_inc}
-
-    target_data = {
-        "observed_o_volume": np.array(load_data.o_target_data["volume"], dtype="f"),
-        "observed_od_volume": np.array(load_data.od_target_data["volume"], dtype="f"),
-        "link_count_car": np.array(load_data.link_target_data["link_count_car_volumes"], dtype="f"),
-        # "link_count_truck": np.array(load_data.link_df["truck_vol"], dtype="f"),
-        "VMT_car": np.array(config["network_observation"]["passenger_car_VMT"], dtype="f"),
-        # "VMT_truck": np.array(config["network_observation"]["passenger_truck_VMT"], dtype="f"),
-        # "VHT_car":  np.array(config["network_observation"]["passenger_car_VHT"], dtype="f"),
-        # "VHT_truck": np.array(config["network_observation"]["passenger_truck_VHT"], dtype="f"),
-                   }
-
-    lagrangian_params, lambda_positive = load_data.get_lagrangian_params(path_link_inc)
-    run_optimization(od_volume=od_volume,
-                     sparse_matrix=sparse_matrix,
-                     path_link_inc=path_link_inc,
-                     path_flow=path_flow,
-                     bpr_params=bpr_params,
-                     optimization_params=config["optimization_setting"],
-                     target_data=target_data,
-                     obj_setting=config["multi_objective_function_setting"],
-                     access_data_sources=load_data,
-                     )

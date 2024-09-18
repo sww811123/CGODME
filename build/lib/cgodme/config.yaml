@@ -1,8 +1,9 @@
-# ./data/Sioux_Falls/
-# ./data/Chicago_Sketch/
-#./data/Tucson/
-data_path: ./data/Sioux_Falls/
+od_target_path: ./data/Sioux_Falls/target_demand_auto.csv
+ue_pathflows_path: ./data/Sioux_Falls/route_assignment.csv
+ue_linkflows_path: ./data/Sioux_Falls/link.csv
+link_target_path: ./data/Sioux_Falls/link_performance.csv
 output_path: ./data/Sioux_Falls/output/
+
 
 network_observation: # Region Level Targets (arbitrary numbers)
   passenger_car_VMT: 2700

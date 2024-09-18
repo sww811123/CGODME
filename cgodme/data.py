@@ -1,16 +1,17 @@
-import pandas as pd
 import tensorflow as tf
 
-
 class data_generation:
-    def __init__(self, config_setting):
+    def __init__(self,
+                 od_target=None,
+                 ue_pathflows=None,
+                 ue_linkflows=None,
+                 link_target=None):
 
-        # load configuration factors, input data, and target data
-        self.config_set = config_setting
-        self.od_target_data = pd.read_csv(str(self.config_set["data_path"]) + "target_demand_auto.csv")
-        self.route_assignment_data = pd.read_csv(str(self.config_set["data_path"]) + "route_assignment.csv")
-        self.link_data = pd.read_csv(str(self.config_set["data_path"]) + "link.csv")
-        self.link_perform_data = pd.read_csv(str(self.config_set["data_path"] + "link_performance.csv"))
+        # set input data sources
+        self.od_target_data = od_target
+        self.route_assignment_data = ue_pathflows
+        self.link_data = ue_linkflows
+        self.link_perform_data = link_target
 
         # origin (zonal) data
         self.ozone_df = self.route_assignment_data.groupby('o_zone_id')['volume'].sum()
