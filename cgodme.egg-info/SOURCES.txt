@@ -1,0 +1,10 @@
+README.md
+setup.py
+cgodme/__init__.py
+cgodme/calibration.py
+cgodme/data.py
+cgodme/run.py
+cgodme.egg-info/PKG-INFO
+cgodme.egg-info/SOURCES.txt
+cgodme.egg-info/dependency_links.txt
+cgodme.egg-info/top_level.txt

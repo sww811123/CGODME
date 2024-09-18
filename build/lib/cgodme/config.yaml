@@ -1,0 +1,28 @@
+od_target_path: ./data/Sioux_Falls/target_demand_auto.csv
+ue_pathflows_path: ./data/Sioux_Falls/route_assignment.csv
+ue_linkflows_path: ./data/Sioux_Falls/link.csv
+link_target_path: ./data/Sioux_Falls/link_performance.csv
+output_path: ./data/Sioux_Falls/output/
+
+
+network_observation: # Region Level Targets (arbitrary numbers)
+  passenger_car_VMT: 2700
+#  passenger_car_VHT: 15000
+#  passenger_truck_VMT: 130
+#  passenger_truck_VHT: 1500
+
+
+multi_objective_function_setting: # dispersion weighting factors
+  passenger_car_count: 1.0
+  passenger_car_vmt: 1.0
+#  passenger_car_vht: 1.0
+  od_split: 1.0
+  zonal: 1.0
+#  truck_count: 1.0
+#  truck_vmt: 1.0
+#  truck_vht: 1.0
+
+optimization_setting:
+  training_steps: 20000
+  learning_rates: 0.01
+  penalty_coefficient: 1.0
